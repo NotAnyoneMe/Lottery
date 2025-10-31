@@ -41,6 +41,13 @@ CREATE TABLE IF NOT EXISTS lotteries (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     archived_at TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS user_settings (
+    user_id INTEGER PRIMARY KEY,
+    language TEXT DEFAULT 'english',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -147,19 +154,46 @@ async def get_random_active_ticket() -> Optional[Dict[str, Any]]:
 
 async def archive_lottery() -> None:
     async with aiosqlite.connect(DB_PATH) as db:
-        # Копируем текущие билеты в архив
+        # Copy current tickets to archive
         await db.execute(
             """
             INSERT INTO tickets_archive (ticket_number, user_id, username, file_id, status, comment)
             SELECT ticket_number, user_id, username, file_id, status, comment FROM tickets
             """
         )
-        # Очищаем активные билеты
+        # Clear active tickets
         await db.execute("DELETE FROM tickets")
-        # Закрываем текущую лотерею
+        # Close current lottery
         await db.execute(
             "UPDATE lotteries SET archived_at = CURRENT_TIMESTAMP WHERE archived_at IS NULL"
         )
-        # Открываем новую
+        # Open new lottery
         await db.execute("INSERT INTO lotteries DEFAULT VALUES")
         await db.commit()
+
+
+async def set_user_language(user_id: int, language: str) -> None:
+    """Set user's preferred language in database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO user_settings (user_id, language, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                language = excluded.language,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, language),
+        )
+        await db.commit()
+
+
+async def get_user_language(user_id: int) -> Optional[str]:
+    """Get user's preferred language from database."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT language FROM user_settings WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
